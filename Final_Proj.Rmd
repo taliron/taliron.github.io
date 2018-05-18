@@ -1,0 +1,306 @@
+---
+title: "Final_proj"
+author: "Avital Ron"
+date: "4/16/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+In this analysis, we are going to discuss Marvel movies and their sources of income. Ultimately, our goal is to analyze the relationship (if any) between movie sales and the quality of the movies.
+
+1) We will scrape Marvel income data online and clean and organize the data.
+2) We will summarize some of the data distributons.
+3) We will demonstrate hypothesis testing by running a one sample t-test.
+4) We will look at the linear regression of the data.
+5) We will run a clustering algorithm on the dataset.
+
+
+First we will download the necessary libraries for this project.
+
+```{r warning=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(broom)
+library(lubridate)
+library(rvest)
+library(tm)
+```
+
+##Data Acquisition
+
+First, we need to find a website that has the data we are trying to investigate. The source that I chose to use was : https://www.the-numbers.com/movies/franchise/Marvel-Cinematic-Universe#tab=summary.
+
+By using the library rvest, scraping becomes a fairly painless process. A good resource for learning more about this can be found at https://stat4701.github.io/edav/2015/04/02/rvest_tutorial/.
+
+```{r warning=FALSE}
+url = "https://www.the-numbers.com/movies/franchise/Marvel-Cinematic-Universe#tab=summary"
+data <- url %>%
+  read_html() %>%
+  html_table()
+earnings_data <- data[1] %>% as.data.frame()
+earnings_data %>% head()
+earnings_data2 <- data[2] %>% as.data.frame()
+earnings_data2 %>% head()
+```
+
+This gives us the two datasets displayed above. The first dataset has Marvel movie profits from the box office. The second dataset is money made from video sales
+
+##Data Cleaning
+
+While the above data is useful, there are changes that need to be made in order to perform any kind of meaningful analysis on it. 
+
+For example, the last two rows involve totals and averages. This clutters up the data and has tons of missing values, so we should remove those.
+There also isn't any value in the Trailer column, so we could remove that as well.
+To do this, we will use the dplyr functions, which you can learn more about here using this tutorial: https://cran.r-project.org/web/packages/dplyr/vignettes/dplyr.html.
+
+For more information on the Date data type, look at https://www.stat.berkeley.edu/~s133/dates.html.
+
+```{r warning=FALSE}
+earnings <- earnings_data %>%
+  filter(Movie != "Totals" & Movie != "Averages") %>%
+  mutate(Release.Date = as.Date(removePunctuation(Release.Date), format = "%B %d %Y")) %>%
+  filter(Release.Date <= as.Date("January 3 2018",format = "%B %d %Y")) %>%
+  select(-Trailer)
+earnings %>% head()
+```
+
+Now we can make sure that all of the data attributes are of the right type. Since we specifically want all of the below attributes to be numbers, we reformat them before calling "as.numeric". We do this by taking getting rid of extraneous symbols in the attributes such as "$" or ",", then transforming them into integers
+For more information about regular expressions and gsub, visit http://www.endmemo.com/program/R/gsub.php.
+
+```{r warning=FALSE}
+earnings <- earnings %>%
+  mutate(ProductionBudget = gsub('\\$','', ProductionBudget)) %>%
+  mutate(ProductionBudget = gsub(',','', ProductionBudget)) %>%
+  mutate(ProductionBudget = as.numeric(ProductionBudget)) %>%
+  mutate(DomesticOpeningWeekend = gsub('\\$','', DomesticOpeningWeekend)) %>%
+  mutate(DomesticOpeningWeekend = gsub(',','', DomesticOpeningWeekend)) %>%
+  mutate(DomesticOpeningWeekend = as.numeric(DomesticOpeningWeekend)) %>%
+  mutate(DomesticBox.Office = gsub('\\$','', DomesticBox.Office)) %>%
+  mutate(DomesticBox.Office = gsub(',','', DomesticBox.Office)) %>%
+  mutate(DomesticBox.Office = as.numeric(DomesticBox.Office)) %>%
+  mutate(WorldwideBox.Office = gsub('\\$','', WorldwideBox.Office)) %>%
+  mutate(WorldwideBox.Office = gsub(',','', WorldwideBox.Office)) %>%
+  mutate(WorldwideBox.Office = as.numeric(WorldwideBox.Office))
+earnings %>% head()
+```
+
+We will now do a similar set of operations on the DVD's table.
+
+```{r warning=FALSE}
+earnings2 <- earnings_data2 %>%
+  filter(Movie != "Totals" & Movie != "Averages") %>%
+  mutate(Release.Date = as.Date(removePunctuation(Release.Date), format = "%B %d %Y")) %>%
+  filter(Release.Date <= as.Date("March 3 2018",format = "%B %d %Y")) %>%
+  mutate(DomesticDVD.Sales = gsub('\\$','', DomesticDVD.Sales)) %>%
+  mutate(DomesticDVD.Sales = gsub(',','', DomesticDVD.Sales)) %>%
+  mutate(DomesticDVD.Sales = as.numeric(DomesticDVD.Sales)) %>%
+  mutate(DomesticBlu.ray.Sales = gsub('\\$','', DomesticBlu.ray.Sales)) %>%
+  mutate(DomesticBlu.ray.Sales = gsub(',','', DomesticBlu.ray.Sales)) %>%
+  mutate(DomesticBlu.ray.Sales = as.numeric(DomesticBlu.ray.Sales)) %>%
+  mutate(Total.DomesticVideo.Sales = gsub('\\$','', Total.DomesticVideo.Sales)) %>%
+  mutate(Total.DomesticVideo.Sales = gsub(',','', Total.DomesticVideo.Sales)) %>%
+  mutate(Total.DomesticVideo.Sales = as.numeric(Total.DomesticVideo.Sales))
+
+earnings2 %>% head()
+```
+
+##Join
+
+We have 2 tables now describing data that could make much more sense in one table.
+
+The entities are the invididual movies, and the columns are all various attributes, such as movie type and release date. Thus, in order to preserve all attributes, we want to do a full join on the data. This way, we have access to all of the attributes in one data table.
+
+```{r warning=FALSE}
+total_earnings <- earnings %>%
+  full_join(earnings2, by="Movie")
+```
+
+##Acquiring More Information
+
+One way of gaining more insight or information on a data set is to do a data transformation using the information that you already have. This is demonstrated below. Using data we already acquired, we can get the total income for each Marvel movie, for example.
+
+```{r warning=FALSE}
+total_earnings <- total_earnings %>%
+  mutate(Total.Income = DomesticBox.Office + Total.DomesticVideo.Sales) %>%
+  mutate(Post.OpeningWeekend = DomesticBox.Office-DomesticOpeningWeekend)
+```
+
+Another way of obtaining data is to continue scraping. Now we would like to collect some measurement to represent quality of the movies. I chose to use the metascores from metacritic.com. 
+
+I used the name of the movie to generate each metacritic URL, and then scraped the metascore from each of the websites. This finally gives us our complete dataset.
+
+NOTE: You might notice that for the movie "The Avengers", there is an additional condition ensuring that the URL for The Avengers includes the year 2012. This condition is there because when I ran the program without it, I found that The Avengers was a wild outlier. I decided to investigate further. As it turns out, another movie had been previously made, also called "The Avengers", and my program was picking up the ratings for that movie instead. After making the below correction, I was able to collect that correct set of reviews.
+
+```{r warning=FALSE}
+metacritic_score <- function(movie_name){
+  movie_name = ifelse (movie_name == "The Avengers", "The Avengers 2012", movie_name)
+  movie_name <- gsub(":","", movie_name)
+  movie_name <- tolower(movie_name)
+  url <- paste("http://www.metacritic.com/movie/",gsub(" ","-",movie_name), sep = "")
+  gsub(':','', url)
+  word = url %>%
+    read_html() %>%
+    html_nodes('.metascore_w') %>%
+    html_text()
+  return(as.numeric(word[1]))
+}
+full_data <- total_earnings %>%
+  group_by(Movie) %>%
+  mutate(rating = metacritic_score(as.character(Movie))) %>%
+  ungroup(Movie)
+full_data %>% head()
+```
+
+Each movie has 11 attributes. 
+
+##One Variable Data Summary
+
+```{r warning=FALSE}
+full_data %>%
+  ggplot(mapping=aes(x=Total.Income)) +
+    geom_histogram()
+```
+
+Although this is difficult to see with the small sample size, the data here appears to vaguely resemble a skewed normal distribution. The mode is at about 500 million, while the mean is closer to 400 million. The median is lower still, because of the skew of the distribution. The standard deviation (average distance from the mean) is about 150 million. 
+
+##Testing Hypothesis
+
+We are going to test the hypothesis that Marvel makes about 200,000,000 in DVD and Blue-Ray sales domestically on average. Since we don't know the variance and we are using a small sample size, we will use a t-test to determine whether we will reject the null hypothesis.
+
+Null Hypothesis: Marvel's mean video sales is equal to 200,000,000.
+Alternative Hypothesis: Marvel's mean video sales is equal to 200,000,000.
+
+
+```{r warning=FALSE}
+sem <- sd(full_data$Total.DomesticVideo.Sales) / sqrt(17)
+t <- (mean(full_data$Total.DomesticVideo.Sales) -  100000000) / sem
+pt(t,16)
+```
+Because this p-value is (much) higher than our significance level of .05, we can accept the null hypothesis that the mean video sales is $100 million.
+
+##Data Visualizaton and Regression
+
+Let's understand how Worldwide Box Office can be relate to production budget.
+
+For more information on how to make this kind of graph, check out https://plot.ly/r/line-and-scatter/.
+
+```{r warning=FALSE}
+library(plotly)
+
+plot_ly(data = full_data, x = ~ProductionBudget, y = ~Total.Income, text = ~Movie)
+
+```
+
+By observing the graph, we can see what looks to be an upward trend where on average, as the Production Budget increases, so does the total income. However, in order to see exactly what this trend is, and to assess how likely it is that this pattern emerged from natural variation in the data, we will run a linear regression on the data.
+
+```{r warning=FALSE}
+ProdInc <- lm(Total.Income~ProductionBudget, data=full_data)
+tidy(ProdInc)
+```
+Since our p-value for the regression is less than .05, we accept that there is a significant correlation between the production budget and total domestic income, and this correlation did not emerge as a product of random variation. Specifically, the p-value indicates that the probability that this result came about as a result of natural variation is 0.0057715. 
+
+In order to judge to further assess this model, we can examine the residuals. The residuals are the differences between the predicted value on the regresson line and the actual value for each data point. By looking at regresson, we can examine if regression was the right choice to model the data.
+
+```{r warning=FALSE}
+ProdInc %>%
+  augment() %>%
+  ggplot(aes(x=ProductionBudget, y=.resid)) +
+    geom_point() +
+    labs(title="Total Domestic Income Over Production Budget",
+         x = "Production Budget",
+         y = "Residual") + 
+    geom_hline(aes(yintercept=0),size=1,color = "red")
+```
+
+This graph represents the risiduals of of the previous regression. You can see that most of the points are close to the regression line (because they have relatively low values). The variance does increase as production budget increases, and it looks as though these points throw off the regression a bit.
+
+Now we can use this strategy to examine the relationship between multiple attributes. For example, below is an analysis of total income based on production budget and rating. As you can see, the p-value for rating is greater than .5, meaning that there is definitely no relationship between the rating and income a movie makes.
+
+```{r warning=FALSE}
+ProdInc <- lm(Total.Income~ProductionBudget+rating, data=full_data)
+tidy(ProdInc)
+```
+
+We can see that this graph of residuals looks really similar to the previous one, most likely because rating is not factored in very highly.
+
+```{r warning=FALSE}
+ProdInc %>%
+  augment() %>%
+  ggplot(aes(x=ProductionBudget, y=.resid)) +
+    geom_point() +
+    labs(title="Total Domestic Income Over Production Budget",
+         x = "Production Budget",
+         y = "Residual") + 
+    geom_hline(aes(yintercept=0),size=1,color = "red")
+```
+
+We can use this strategy to analyze various properties of the data. For example, we will now look to see if there is a relationship between the amount of videos sold and three other attributes: amount made in theaters after opening weekend, rating, and production budget.
+
+```{r warning=FALSE}
+gap <- lm(Total.DomesticVideo.Sales~Post.OpeningWeekend+rating+ProductionBudget, data=full_data)
+tidy(gap)
+```
+As we can see, the only attribute that has a strong relationship with total videos sold is the amount made in theaters post opening weekend. Rating still appears to have no relationship with income. Surprisingly, production budget also does not really have a strong relationship with total videos sold.
+
+##K-Means Clustering
+
+Another way to analyze the movie data is to cluster them. I will use the K-means clustering algorithm, which minimizes the squared euclidean distances between the data and k points. However, in order to use this algorithm, the data has to be standardized. This is because different attributes are scaled differently and standardizing them removes this bias from the clustering. 
+
+There are several ways of displaying results of clustering. Below are two options.
+
+fvis_cluster: This function is designed specifically for graphing k-means. You'll notice below that the graph's axes are labled "Dim1" and "Dim2". This is because the data is transformed into a new pair of variables using principal component analysis (PCA), which essentially reduces the dimentionality of the arguments to 2. Each dimention representes a certain percentage of the variation from the original data. However, if you want to just graph based on a pair of variables, just use the parameter "choose.vars" in the function, and you can select what you want your x and y axes to be.
+
+The function fviz_cluster transforms the initial set of variables into a new set of variables through principal component analysis (PCA). This dimensionality reduction algorithm operates on the four variables and outputs two new variables (Dim1 and Dim2) that represent the original variables, a projection or "shadow" of the original data set. Each dimension represent a certain amount of the variation (i.e. information) contained in the original data set. 
+
+The plot function is just standard R, demonstrating that you don't necessarily need any fancy packages to display results of k-means clustering.
+
+For more information on the k-means process, this is a very helpful resource: https://rpubs.com/FelipeRego/K-Means-Clustering
+
+For more information on the kmeans function, check out the documentation: http://stat.ethz.ch/R-manual/R-devel/library/stats/html/kmeans.html
+
+For more information on fvis_cluster, feel free to look at its documentation: http://www.sthda.com/english/rpkgs/factoextra/reference/fviz_cluster.html
+
+```{r warning=FALSE}
+library(cluster)
+library(factoextra)
+
+standardized <- full_data %>%
+  select(-Movie,-Release.Date.y) %>% 
+  mutate(Release.Date.x = as.numeric(Release.Date.x)) %>%
+  scale()
+standardized <- na.omit(standardized)
+
+k2 <- kmeans(standardized, centers = 2, nstart = 25)
+
+fviz_cluster(k2, data = standardized, geom = "point",
+             stand = FALSE, frame.type = "norm") + theme_bw()
+
+plot(standardized, col =(k2$cluster+1) , main="K-Means result with 2 clusters", pch=20, cex=2)
+
+```
+
+Now we can also choose to try varying numbers of clusters in order to compare our results. For more information on how to do this, look at https://uc-r.github.io/kmeans_clustering
+
+Below is a series of charts with varying numbers of clusters. Note that this does not tell us how many clusters are optimal.
+
+```{r warning=FALSE}
+k3 <- kmeans(standardized, centers = 3, nstart = 25)
+k4 <- kmeans(standardized, centers = 4, nstart = 25)
+k5 <- kmeans(standardized, centers = 5, nstart = 25)
+
+# plots to compare
+p1 <- fviz_cluster(k2, geom = "point", data = standardized) + ggtitle("k = 2")
+p2 <- fviz_cluster(k3, geom = "point",  data = standardized) + ggtitle("k = 3")
+p3 <- fviz_cluster(k4, geom = "point",  data = standardized) + ggtitle("k = 4")
+p4 <- fviz_cluster(k5, geom = "point",  data = standardized) + ggtitle("k = 5")
+
+library(gridExtra)
+grid.arrange(p1, p2, p3, p4, nrow = 2)
+```
+
+##Conclusion
+
+Thank you so much for taking the time to read through my introductory data analysis of Marvel movies. I hope you now have a better understanding of the data science pipeline, from data acquisition to analysis. Have a wonderful day!
